@@ -3,6 +3,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const CORS_PROXIES = [
     "https://corsproxy.io/?",
     "https://api.allorigins.win/raw?url=",
+    "https://api.codetabs.com/v1/proxy?quest=",
     "https://proxy.cors.sh/"
 ];
 let currentProxyIndex = 0;
@@ -195,19 +196,35 @@ async function extractFromPPTX(file) {
     loadingIndicator.textContent = "📊 Analizando PPTX: " + file.name;
     const zip = await JSZip.loadAsync(file);
     const mediaFiles = Object.keys(zip.files).filter(path => path.startsWith("ppt/media/"));
+    
+    // Extensiones de imagen soportadas por navegadores comunes
+    const supportedExts = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'];
+
     for (const path of mediaFiles) {
         if (zip.files[path].dir) continue;
-        const blob = await zip.files[path].async("blob");
-        const bitmap = await createImageBitmap(blob);
-        const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width; canvas.height = bitmap.height;
-        canvas.getContext("2d").drawImage(bitmap, 0, 0);
-        sourceImages.push({ 
-            id: path, 
-            sourceName: path.split("/").pop(), 
-            canvas: canvas, 
-            originalSize: blob.size 
-        });
+        
+        const ext = path.split('.').pop().toLowerCase();
+        if (!supportedExts.includes(ext)) {
+            console.warn("Saltando formato no soportado en PPTX:", path);
+            continue;
+        }
+
+        try {
+            const blob = await zip.files[path].async("blob");
+            const bitmap = await createImageBitmap(blob);
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width; canvas.height = bitmap.height;
+            canvas.getContext("2d").drawImage(bitmap, 0, 0);
+            sourceImages.push({ 
+                id: path, 
+                sourceName: path.split("/").pop(), 
+                canvas: canvas, 
+                originalSize: blob.size 
+            });
+        } catch (err) {
+            console.error("Error decodificando imagen de PPTX:", path, err);
+            // Seguimos con la siguiente imagen en lugar de romper todo el proceso
+        }
     }
 }
 
@@ -261,60 +278,79 @@ async function parseAndExtractImages(htmlContent, baseUrl) {
         let src = img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("srcset");
         if (!src) continue;
         
-        // Limpieza básica si es srcset
         if (src.includes(",")) src = src.split(",")[0].split(" ")[0];
 
         try {
             if (baseUrl && !src.startsWith("data:")) src = new URL(src, baseUrl).href;
-            if (!src.endsWith(".svg")) uniqueSrcs.add(src);
+            if (!src.endsWith(".svg") && !uniqueSrcs.has(src)) uniqueSrcs.add(src);
         } catch(e) {}
     }
 
     const srcsArray = Array.from(uniqueSrcs);
     const total = srcsArray.length;
     let count = 0;
+    let successfulCount = 0;
 
-    for (const src of srcsArray) {
+    // Función interna para procesar una sola imagen con reintentos
+    async function processSingleImage(src) {
         count++;
-        loadingIndicator.textContent = `🖼️ Extrayendo imagen ${count} de ${total}...`;
+        loadingIndicator.textContent = `🖼️ Procesando imágenes... (${successfulCount} exitosas de ${total})`;
         
-        try {
-            if (src.startsWith("data:")) {
+        if (src.startsWith("data:")) {
+            try {
                 const img = await loadImage(src);
                 const cvs = imageToCanvas(img);
+                successfulCount++;
                 sourceImages.push({
                     id: `web_${Math.random().toString(36).substr(2, 5)}`,
                     sourceName: "web_img",
                     canvas: cvs,
                     originalSize: estimateSize(src)
                 });
-                continue;
-            }
-
-            const proxied = getProxyUrl(src);
-            const res = await fetch(proxied);
-            if (!res.ok) continue;
-            const blob = await res.blob();
-            
-            if (blob.size < 4000) continue; 
-            
-            const bitmap = await createImageBitmap(blob);
-            const cvs = document.createElement("canvas");
-            cvs.width = bitmap.width; cvs.height = bitmap.height;
-            cvs.getContext("2d").drawImage(bitmap, 0, 0);
-            
-            sourceImages.push({ 
-                id: `web_${Math.random().toString(36).substr(2, 5)}`, 
-                sourceName: "web_img", 
-                canvas: cvs, 
-                originalSize: blob.size 
-            });
-            
-            if (sourceImages.length >= 150) break;
-            
-        } catch (e) {
-            console.warn("Fallo al procesar imagen:", src, e);
+            } catch(e) {}
+            return;
         }
+
+        // Estrategias de descarga: Directa -> Proxy 1 -> Proxy 2 ...
+        const strategies = [
+            (url) => fetch(url), // Directo (a veces funciona si hay CORS abierto)
+            (url) => fetch("https://corsproxy.io/?" + encodeURIComponent(url)),
+            (url) => fetch("https://api.allorigins.win/raw?url=" + encodeURIComponent(url)),
+            (url) => fetch("https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url))
+        ];
+
+        for (const strategy of strategies) {
+            try {
+                const res = await strategy(src);
+                if (!res.ok) continue;
+                const blob = await res.blob();
+                if (blob.size < 4000) return; 
+                
+                const bitmap = await createImageBitmap(blob);
+                const cvs = document.createElement("canvas");
+                cvs.width = bitmap.width; cvs.height = bitmap.height;
+                cvs.getContext("2d").drawImage(bitmap, 0, 0);
+                
+                successfulCount++;
+                sourceImages.push({ 
+                    id: `web_${Math.random().toString(36).substr(2, 5)}`, 
+                    sourceName: "web_img", 
+                    canvas: cvs, 
+                    originalSize: blob.size 
+                });
+                return; // Éxito, salimos de las estrategias para esta imagen
+            } catch (e) {
+                // Siguiente estrategia
+            }
+        }
+    }
+
+    // Procesar en paralelo con límite de concurrencia (5 imágenes a la vez)
+    const concurrency = 5;
+    for (let i = 0; i < srcsArray.length; i += concurrency) {
+        if (sourceImages.length >= 100) break; // Límite de seguridad
+        const chunk = srcsArray.slice(i, i + concurrency);
+        await Promise.all(chunk.map(src => processSingleImage(src)));
     }
 }
 
