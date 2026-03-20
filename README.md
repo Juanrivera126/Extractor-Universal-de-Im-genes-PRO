@@ -1,77 +1,62 @@
-# Extractor Universal de Imágenes PRO
+# 🖼️ Extractor Universal de Imágenes & Optimizador Web
 
-**Extractor Universal de Imágenes PRO** es una aplicación web avanzada diseñada para extraer, optimizar y descargar imágenes desde múltiples fuentes en un entorno totalmente local y sin instalación.
+Un potente extractor de imágenes "todo en uno" basado íntegramente en el navegador. Permite recuperar imágenes de archivos complejos (**PDF, PPTX, HTML**), extraer contenido visual de **sitios web** mediante URL o procesar **carpetas locales** enteras, incluyendo herramientas avanzadas de compresión y conversión a formatos modernos como **WebP**.
 
-Permite trabajar con **PDF (objetos reales internos), PowerPoint (.pptx), archivos HTML y páginas web por URL**, ofreciendo un flujo profesional de extracción y compresión orientado a edición, publicación web y reutilización de recursos gráficos.
+![Versión](https://img.shields.io/badge/version-2.0-blue)
+![Tecnología](https://img.shields.io/badge/Tecnología-JS_Pure-yellow)
+![Privacidad](https://img.shields.io/badge/Privacidad-100%25_Local-green)
 
----
+## ✨ Características Principales
 
-## 🔍 Funcionalidades principales
+*   **📄 Extracción de PDF (Objetos Reales):** A diferencia de otros extractores, este accede a los objetos de imagen internos (`XObjects`) del PDF en lugar de tomar capturas de la página, preservando la resolución original.
+*   **📊 Soporte PowerPoint (.pptx):** Analiza la estructura interna del archivo para extraer todos los recursos multimedia guardados en las diapositivas.
+*   **🌐 Extractor de URL Web:** Ingresa una dirección web y la herramienta detectará y descargará las imágenes automáticamente (utiliza un proxy CORS para evitar bloqueos de seguridad).
+*   **📁 Procesamiento de Carpetas y Archivos:** Permite seleccionar una carpeta completa de tu ordenador para realizar conversiones masivas (ej. de PNG a WebP) de forma instantánea.
+*   **⚡ Panel de Optimización Real-Time:**
+    *   **Formatos:** Salida en WebP, JPEG o PNG.
+    *   **Escala:** Redimensiona imágenes proporcionalmente (de 0.2x a 1.5x).
+    *   **Calidad:** Ajuste fino de la relación calidad/peso.
+    *   **Comparativa:** Visualización del peso original vs. optimizado y porcentaje de ahorro.
+*   **📦 Descarga en ZIP:** Empaqueta todos los resultados en un único archivo comprimido con un solo clic.
 
-### 1. Extracción inteligente de PDF (modo profesional)
-- Analiza los **objetos internos (XObjects)** del PDF.
-- No realiza capturas de pantalla: recupera las imágenes originales incrustadas.
-- Soporta imágenes RGB, RGBA y escala de grises.
-- Procesamiento robusto incluso ante objetos dañados.
+## 🚀 Instalación y Uso
 
-### 2. Extracción desde PowerPoint (.PPTX)
-- Accede directamente a la carpeta interna `/ppt/media/`.
-- Recupera imágenes en su resolución original.
+Al ser una aplicación web estática (Client-side), no requiere servidor, base de datos ni instalación de dependencias en tu equipo.
 
-### 3. Extracción desde HTML y páginas web
-- Procesa archivos HTML locales.
-- Permite extraer imágenes desde una URL pública usando proxy CORS.
-- Detecta imágenes duplicadas y descarta SVG automáticamente.
-- Soporta imágenes embebidas en base64.
+1.  **Clona el repositorio:**
+    ```bash
+    git clone https://github.com/tu-usuario/extractor-imagenes-universal.git
+    ```
+2.  **Ejecuta:** Abre el archivo `index.html` en cualquier navegador moderno (Chrome, Firefox, Edge, Safari).
 
----
+## 🛠️ Tecnologías Utilizadas
 
-## ⚙️ Sistema de Optimización Profesional
+*   **[PDF.js](https://mozilla.github.io/pdf.js/):** Para el análisis y renderizado de objetos dentro de documentos PDF.
+*   **[JSZip](https://stuk.github.io/jszip/):** Para la descompresión de archivos Office (PPTX) y la generación de paquetes de descarga.
+*   **HTML5 Canvas API:** Motor central para el procesamiento, redimensionado y compresión de imágenes.
+*   **CORS Proxy:** Integración con servicios de proxy para la extracción de contenido web remoto.
 
-Incluye un módulo de compresión configurable:
+## 🔒 Privacidad y Seguridad
 
-- **Formatos de salida:** WEBP, JPEG, PNG  
-- **Control de calidad (0.1 – 1.0)**  
-- **Escalado de resolución (0.2x – 1.5x)**  
-- **Modo compresión activable/desactivable**  
-- **Preset automático “Web Presets”** para optimización rápida  
+**Tus archivos nunca salen de tu ordenador.** Todo el procesamiento de imágenes, lectura de PDFs y compresión se realiza localmente en la memoria de tu navegador. Esto garantiza:
+*   Máxima velocidad de procesamiento.
+*   Privacidad absoluta de tus documentos.
+*   Funcionamiento sin necesidad de subir datos a la nube.
 
-Además muestra:
+## 👤 Créditos y Desarrollo
 
-- Tamaño original estimado  
-- Tamaño optimizado  
-- Porcentaje de reducción por imagen  
-- Comparativa total antes/después  
+*   **Autor:** Juan Guillermo Rivera Berrío.
+*   **Tecnología:** Desarrollado con el apoyo de **Gemini 3 Pro** para la optimización de algoritmos de extracción y manejo de objetos de imagen.
 
----
+## 📝 Licencia
 
-## 📦 Descarga flexible
-
-- Descarga individual por imagen  
-- Descarga masiva en archivo ZIP  
-- Renombrado automático basado en origen  
-- Pack final con nombre del archivo fuente  
-
----
-
-## 🖥️ Ventajas técnicas
-
-- Funciona 100% en navegador (cliente)  
-- No sube archivos a servidores  
-- Procesamiento seguro y local  
-- Interfaz moderna, clara y profesional  
-- Compatible con navegadores actuales  
+Este proyecto se distribuye bajo la Licencia MIT. Siéntete libre de usarlo, modificarlo y adaptarlo a tus necesidades.
 
 ---
 
-## 🎯 Ideal para
-
-- Diseñadores gráficos  
-- Docentes que reutilizan material PDF  
-- Creadores de contenido digital  
-- Editores web  
-- Desarrolladores que necesitan optimizar assets  
-
----
-
-**Extractor Universal de Imágenes PRO 3** combina extracción profunda con optimización avanzada, convirtiéndose en una herramienta integral para recuperar y preparar recursos gráficos desde múltiples formatos en un solo entorno web eficiente.
+### 💡 ¿Quieres contribuir?
+Si encuentras un error o tienes una sugerencia para mejorar la extracción de objetos:
+1. Haz un **Fork** del proyecto.
+2. Crea una rama (`git checkout -b feature/NuevaMejora`).
+3. Haz un **Commit** con tus cambios.
+4. Envía un **Pull Request**.

@@ -21,11 +21,18 @@
 
     <!-- ZONA DE ARCHIVOS -->
     <div class="input-section drop-zone" id="dropZone">
-        <div>📂</div>
-        <h3>Arrastra tu archivo aquí</h3>
-        <p style="font-size:0.85em; color:#666;">Formatos: .PDF, .PPTX, .HTML</p>
-        <input type="file" id="fileInput" accept=".pdf, .pptx, .html, application/pdf, application/vnd.openxmlformats-officedocument.presentationml.presentation, text/html" hidden>
+        <h3>Arrastra tu archivo o carpeta aquí</h3>
+    <p style="font-size:0.85em; color:#666;">PDF, PPTX, HTML o Imágenes sueltas</p>
+    
+    <div style="margin-top: 10px; display: flex; gap: 10px; justify-content: center;">
+        <button onclick="document.getElementById('fileInput').click()" class="secondary" style="padding: 5px 10px; font-size: 0.8em;">Seleccionar Archivos</button>
+        <button onclick="document.getElementById('folderInput').click()" class="secondary" style="padding: 5px 10px; font-size: 0.8em;">Seleccionar Carpeta</button>
     </div>
+
+    <input type="file" id="fileInput" accept=".pdf, .pptx, .html, .jpg, .jpeg, .png, .webp" multiple hidden>
+    <!-- Nuevo input para carpetas -->
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+</div>
 
     <div class="separator">O ingresa una URL web</div>
 
