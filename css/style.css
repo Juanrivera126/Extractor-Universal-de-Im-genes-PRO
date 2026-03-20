@@ -75,3 +75,17 @@ input[type=range] { width: 100%; cursor: pointer; }
 footer {
     text-align: center; margin-top: 40px; padding: 20px; color: #7f8c8d; font-size: 0.9em; border-top: 1px solid #e1e4e8;
 }
+
+button.secondary {
+    background-color: #708090; /* Color pizarra/gris azulado de tu imagen */
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 8px;
+    font-weight: bold;
+    width: 100%;
+}
+
+button.secondary:hover {
+    background-color: #5a6976;
+}
