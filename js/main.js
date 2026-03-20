@@ -1,6 +1,15 @@
 // --- Configuración Inicial ---
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-const CORS_PROXY = "https://corsproxy.io/?"; 
+const CORS_PROXIES = [
+    "https://corsproxy.io/?",
+    "https://api.allorigins.win/raw?url=",
+    "https://proxy.cors.sh/"
+];
+let currentProxyIndex = 0;
+
+function getProxyUrl(url) {
+    return CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
+}
 
 // --- Elementos DOM ---
 const dropZone = document.getElementById("dropZone");
@@ -33,14 +42,14 @@ scaleRange.oninput = () => scaleValue.textContent = scaleRange.value + "x";
 [qualityRange, scaleRange, formatSelect, compressToggle].forEach(el => el.onchange = processImages);
 applyBtn.onclick = processImages;
 
-document.getElementById("autoCompress").onclick = () => {
+document.getElementById("autoCompress").onclick = async () => {
     compressToggle.checked = true;
     formatSelect.value = "image/webp";
     qualityRange.value = 0.7;
     scaleRange.value = 0.8;
     qualityValue.textContent = "0.7";
     scaleValue.textContent = "0.8x";
-    processImages();
+    await processImages();
 };
 
 // --- Manejo Archivos y Carpetas ---
@@ -91,7 +100,7 @@ async function handleMultipleFiles(files) {
             alert("No se encontraron imágenes válidas.");
             loadingIndicator.style.display = "none";
         } else {
-            processImages();
+            await processImages();
         }
     } catch (err) {
         alert("Error: " + err.message);
@@ -125,40 +134,58 @@ async function processSingleImageFile(file) {
 
 // 1. PDF - EXTRACTOR
 async function extractFromPDF(file) {
-    loadingIndicator.textContent = "📄 Analizando PDF: " + file.name;
+    loadingIndicator.textContent = "📄 Analizando objetos internos del PDF...";
     const buffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument(buffer).promise;
+    
     let totalImagesFound = 0;
 
     for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const ops = await page.getOperatorList();
-        for (let j = 0; j < ops.fnArray.length; j++) {
-            if (ops.fnArray[j] === pdfjsLib.OPS.paintImageXObject) {
-                const imgName = ops.argsArray[j][0];
-                try {
-                    const imgObj = await page.objs.get(imgName);
-                    if (imgObj) {
-                        let canvas;
-                        if (imgObj.bitmap) {
-                            canvas = document.createElement('canvas');
-                            canvas.width = imgObj.width; canvas.height = imgObj.height;
-                            canvas.getContext('2d').drawImage(imgObj.bitmap, 0, 0);
-                        } else if (imgObj.data) {
-                            canvas = normalizeImageData(imgObj);
+        try {
+            const page = await pdf.getPage(i);
+            const ops = await page.getOperatorList();
+            
+            for (let j = 0; j < ops.fnArray.length; j++) {
+                if (ops.fnArray[j] === pdfjsLib.OPS.paintImageXObject) {
+                    const imgName = ops.argsArray[j][0];
+                    
+                    try {
+                        const imgObj = await page.objs.get(imgName);
+                        
+                        if (imgObj) {
+                            if (imgObj.bitmap) {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = imgObj.width;
+                                canvas.height = imgObj.height;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(imgObj.bitmap, 0, 0);
+                                
+                                sourceImages.push({
+                                    id: `pdf_${i}_${totalImagesFound++}`,
+                                    sourceName: `Pag${i}_Img${totalImagesFound}`,
+                                    canvas: canvas,
+                                    originalSize: estimateSize(canvas.toDataURL()) 
+                                });
+                            } 
+                            else if (imgObj.data) {
+                                const canvas = normalizeImageData(imgObj);
+                                if (canvas) {
+                                    sourceImages.push({
+                                        id: `pdf_${i}_${totalImagesFound++}`,
+                                        sourceName: `Pag${i}_Img${totalImagesFound}`,
+                                        canvas: canvas,
+                                        originalSize: estimateSize(canvas.toDataURL()) 
+                                    });
+                                }
+                            }
                         }
-                        if (canvas) {
-                            sourceImages.push({
-                                id: `pdf_${i}_${totalImagesFound}`,
-                                sourceName: `Pag${i}_Img${totalImagesFound}`,
-                                canvas: canvas,
-                                originalSize: estimateSize(canvas.toDataURL()) 
-                            });
-                            totalImagesFound++;
-                        }
+                    } catch (innerErr) {
+                        console.warn(`Saltando objeto en pág ${i}:`, innerErr);
                     }
-                } catch (e) {}
+                }
             }
+        } catch (pageErr) {
+            console.warn(`Error leyendo página ${i}`, pageErr);
         }
     }
 }
@@ -194,41 +221,100 @@ urlBtn.onclick = async () => {
     const url = urlInput.value.trim();
     if(!url) return alert("Ingresa una URL");
     loadingIndicator.style.display = "block";
-    loadingIndicator.textContent = "🌐 Extrayendo de Web...";
+    loadingIndicator.textContent = "🌐 Conectando con la web...";
+    
+    async function tryFetch(u) {
+        for (let i = 0; i < CORS_PROXIES.length; i++) {
+            currentProxyIndex = i;
+            try {
+                const resp = await fetch(getProxyUrl(u));
+                if (resp.ok) return resp;
+            } catch (e) {}
+        }
+        throw new Error("No se pudo conectar con la web a través de ningún proxy.");
+    }
+
     try {
-        const proxyUrl = CORS_PROXY + encodeURIComponent(url);
-        const resp = await fetch(proxyUrl);
+        const resp = await tryFetch(url);
         const html = await resp.text();
         sourceImages = [];
         await parseAndExtractImages(html, url);
-        processImages();
-    } catch (e) { alert("Error web"); loadingIndicator.style.display="none"; }
+        if (sourceImages.length > 0) {
+            await processImages();
+        } else {
+            alert("No se encontraron imágenes procesables en esta URL.");
+            loadingIndicator.style.display = "none";
+        }
+    } catch (e) { 
+        alert("Error al extraer de la web: " + e.message); 
+        loadingIndicator.style.display="none"; 
+    }
 };
 
 async function parseAndExtractImages(htmlContent, baseUrl) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlContent, "text/html");
     const imgs = Array.from(doc.querySelectorAll("img"));
-    for (const img of imgs) {
-        let src = img.getAttribute("src");
+    
+    const uniqueSrcs = new Set();
+    for(const img of imgs) {
+        let src = img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("srcset");
         if (!src) continue;
+        
+        // Limpieza básica si es srcset
+        if (src.includes(",")) src = src.split(",")[0].split(" ")[0];
+
         try {
             if (baseUrl && !src.startsWith("data:")) src = new URL(src, baseUrl).href;
-            const proxied = src.startsWith("data:") ? src : CORS_PROXY + encodeURIComponent(src);
+            if (!src.endsWith(".svg")) uniqueSrcs.add(src);
+        } catch(e) {}
+    }
+
+    const srcsArray = Array.from(uniqueSrcs);
+    const total = srcsArray.length;
+    let count = 0;
+
+    for (const src of srcsArray) {
+        count++;
+        loadingIndicator.textContent = `🖼️ Extrayendo imagen ${count} de ${total}...`;
+        
+        try {
+            if (src.startsWith("data:")) {
+                const img = await loadImage(src);
+                const cvs = imageToCanvas(img);
+                sourceImages.push({
+                    id: `web_${Math.random().toString(36).substr(2, 5)}`,
+                    sourceName: "web_img",
+                    canvas: cvs,
+                    originalSize: estimateSize(src)
+                });
+                continue;
+            }
+
+            const proxied = getProxyUrl(src);
             const res = await fetch(proxied);
+            if (!res.ok) continue;
             const blob = await res.blob();
-            if (blob.size < 2000) continue;
+            
+            if (blob.size < 4000) continue; 
+            
             const bitmap = await createImageBitmap(blob);
             const cvs = document.createElement("canvas");
             cvs.width = bitmap.width; cvs.height = bitmap.height;
             cvs.getContext("2d").drawImage(bitmap, 0, 0);
+            
             sourceImages.push({ 
-                id: Math.random(), 
+                id: `web_${Math.random().toString(36).substr(2, 5)}`, 
                 sourceName: "web_img", 
                 canvas: cvs, 
                 originalSize: blob.size 
             });
-        } catch (e) {}
+            
+            if (sourceImages.length >= 150) break;
+            
+        } catch (e) {
+            console.warn("Fallo al procesar imagen:", src, e);
+        }
     }
 }
 
@@ -236,64 +322,106 @@ async function parseAndExtractImages(htmlContent, baseUrl) {
 async function processImages() {
     if (!sourceImages.length) return;
     loadingIndicator.style.display = "block";
-    loadingIndicator.textContent = "⚙️ Optimizando...";
+    loadingIndicator.textContent = "⚙️ Optimizando imágenes...";
     
-    setTimeout(async () => {
-        preview.innerHTML = "";
-        let totalOriginal = 0, totalCompressed = 0;
-        const zip = new JSZip();
-        const config = {
-            quality: parseFloat(qualityRange.value),
-            scale: parseFloat(scaleRange.value),
-            format: formatSelect.value,
-            enabled: compressToggle.checked
-        };
-        const ext = config.format.split("/")[1];
+    // Pequeño retardo para dejar que el loading indicator se muestre
+    await new Promise(r => setTimeout(r, 100));
 
-        for (const item of sourceImages) {
-            const finalData = compressCanvas(item.canvas, config);
-            const finalSize = estimateSize(finalData);
-            totalOriginal += item.originalSize;
-            totalCompressed += finalSize;
-            
-            let cleanName = item.sourceName.split('.')[0];
-            const filename = `${cleanName}_opt.${ext}`;
-            
-            addCard(item, finalData, item.originalSize, finalSize, filename);
-            zip.file(filename, finalData.split(",")[1], {base64: true});
+    preview.innerHTML = "";
+    let totalOriginal = 0, totalCompressed = 0;
+    const zip = new JSZip();
+    const config = {
+        quality: parseFloat(qualityRange.value),
+        scale: parseFloat(scaleRange.value),
+        format: formatSelect.value,
+        enabled: compressToggle.checked
+    };
+    const ext = config.format.split("/")[1];
+
+    let processedCount = 0;
+    for (const item of sourceImages) {
+        processedCount++;
+        if (processedCount % 10 === 0) {
+            loadingIndicator.textContent = `⚙️ Optimizando ${processedCount} de ${sourceImages.length}...`;
+            // Ceder tiempo al hilo principal para no congelar la UI
+            await new Promise(r => setTimeout(r, 0));
         }
 
-        originalSizeLabel.textContent = formatBytes(totalOriginal);
-        compressedSizeLabel.textContent = formatBytes(totalCompressed);
-        downloadZipBtn.style.display = "block";
-        downloadZipBtn.onclick = async () => {
-            const content = await zip.generateAsync({type:"blob"});
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(content);
-            a.download = `${currentFileName}_optimizado.zip`;
-            a.click();
-        };
-        loadingIndicator.style.display = "none";
-    }, 100);
+        const finalData = compressCanvas(item.canvas, config);
+        const finalSize = estimateSize(finalData);
+        totalOriginal += item.originalSize;
+        totalCompressed += finalSize;
+        
+        let cleanName = item.sourceName.split('.')[0];
+        const filename = `${cleanName}_opt.${ext}`;
+        
+        addCard(item, finalData, item.originalSize, finalSize, filename);
+        zip.file(filename, finalData.split(",")[1], {base64: true});
+    }
+
+    originalSizeLabel.textContent = formatBytes(totalOriginal);
+    compressedSizeLabel.textContent = formatBytes(totalCompressed);
+    downloadZipBtn.style.display = "block";
+    downloadZipBtn.onclick = async () => {
+        const content = await zip.generateAsync({type:"blob"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(content);
+        a.download = `${currentFileName}_optimizado.zip`;
+        a.click();
+    };
+    loadingIndicator.style.display = "none";
 }
 
 // --- HELPERS ---
 function normalizeImageData(imgObj) {
-    const { width, height, data } = imgObj;
-    const canvas = document.createElement('canvas');
-    canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    const finalData = new Uint8ClampedArray(width * height * 4);
-    // Conversión básica de RGB/Grayscale a RGBA
-    const isRGB = data.length === width * height * 3;
-    for (let i = 0, j = 0; i < data.length; i += (isRGB?3:1), j += 4) {
-        finalData[j] = data[i];
-        finalData[j+1] = isRGB ? data[i+1] : data[i];
-        finalData[j+2] = isRGB ? data[i+2] : data[i];
-        finalData[j+3] = 255;
+    try {
+        const width = imgObj.width;
+        const height = imgObj.height;
+        const rawData = imgObj.data;
+        const kind = imgObj.kind || -1; // ImageKind: 1=GRAY, 2=RGB, 3=RGBA
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        let finalData;
+
+        // Validamos el tamaño esperado vs real
+        if (kind === 2 || rawData.length === width * height * 3) {
+            finalData = new Uint8ClampedArray(width * height * 4);
+            for (let i = 0, j = 0; i < rawData.length; i += 3, j += 4) {
+                finalData[j] = rawData[i];     // R
+                finalData[j + 1] = rawData[i + 1]; // G
+                finalData[j + 2] = rawData[i + 2]; // B
+                finalData[j + 3] = 255;        // Alpha
+            }
+        } 
+        else if (kind === 1 || rawData.length === width * height) {
+            finalData = new Uint8ClampedArray(width * height * 4);
+            for (let i = 0, j = 0; i < rawData.length; i++, j += 4) {
+                finalData[j] = rawData[i];     // R
+                finalData[j + 1] = rawData[i]; // G
+                finalData[j + 2] = rawData[i]; // B
+                finalData[j + 3] = 255;        // Alpha
+            }
+        }
+        else if (kind === 3 || rawData.length === width * height * 4) {
+            finalData = new Uint8ClampedArray(rawData);
+        } 
+        else {
+            console.warn("Formato de color no soportado:", kind, rawData.length);
+            return null;
+        }
+
+        const imageData = new ImageData(finalData, width, height);
+        ctx.putImageData(imageData, 0, 0);
+        return canvas;
+
+    } catch (e) {
+        console.error("Error normalizando imagen:", e);
+        return null;
     }
-    ctx.putImageData(new ImageData(finalData, width, height), 0, 0);
-    return canvas;
 }
 
 function compressCanvas(canvas, cfg) {
