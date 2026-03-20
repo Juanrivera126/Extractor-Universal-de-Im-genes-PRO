@@ -5,6 +5,7 @@ const CORS_PROXY = "https://corsproxy.io/?";
 // --- Elementos DOM ---
 const dropZone = document.getElementById("dropZone");
 const fileInput = document.getElementById("fileInput");
+const folderInput = document.getElementById("folderInput"); // Nuevo
 const urlInput = document.getElementById("urlInput");
 const urlBtn = document.getElementById("urlBtn");
 
@@ -22,8 +23,8 @@ const originalSizeLabel = document.getElementById("originalSize");
 const compressedSizeLabel = document.getElementById("compressedSize");
 const downloadZipBtn = document.getElementById("downloadZip");
 
-let sourceImages = []; // Array: { id, sourceName, canvas, originalSize }
-let currentFileName = "archivo";
+let sourceImages = []; 
+let currentFileName = "extraccion";
 
 // --- Eventos UI ---
 qualityRange.oninput = () => qualityValue.textContent = qualityRange.value;
@@ -42,71 +43,52 @@ document.getElementById("autoCompress").onclick = () => {
     processImages();
 };
 
-// --- Manejo Archivos Locales ---
-dropZone.onclick = () => fileInput.click();
+// --- Manejo Archivos y Carpetas ---
 dropZone.ondragover = e => { e.preventDefault(); dropZone.style.background = "#eef"; };
 dropZone.ondragleave = () => dropZone.style.background = "#f8fafc";
 dropZone.ondrop = e => {
     e.preventDefault();
     dropZone.style.background = "#f8fafc";
-    if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    if(e.dataTransfer.files.length) handleMultipleFiles(e.dataTransfer.files);
 };
-fileInput.onchange = e => { if(e.target.files.length) handleFile(e.target.files[0]); };
 
-// --- Manejo URL ---
-urlBtn.onclick = async () => {
-    const url = urlInput.value.trim();
-    if(!url) return alert("Por favor ingresa una URL válida");
-    if(!url.startsWith("http")) return alert("La URL debe comenzar con http:// o https://");
-    
-    currentFileName = "web_" + new URL(url).hostname.replace(/\./g,"_");
+fileInput.onchange = e => { if(e.target.files.length) handleMultipleFiles(e.target.files); };
+folderInput.onchange = e => { if(e.target.files.length) handleMultipleFiles(e.target.files); };
+
+// Función unificada para manejar archivos (PDF, PPTX, HTML o Imágenes sueltas/carpetas)
+async function handleMultipleFiles(files) {
     sourceImages = [];
     preview.innerHTML = "";
     downloadZipBtn.style.display = "none";
     loadingIndicator.style.display = "block";
-    loadingIndicator.textContent = "🌐 Conectando a la URL...";
+    loadingIndicator.textContent = "⚙️ Analizando archivos...";
 
-    try {
-        await extractFromURL(url);
-        if (sourceImages.length === 0) {
-            alert("No se pudieron extraer imágenes. Es posible que el sitio tenga protecciones.");
-            loadingIndicator.style.display = "none";
-        } else {
-            processImages();
-        }
-    } catch (err) {
-        console.error(err);
-        alert("Error al acceder a la URL: " + err.message);
-        loadingIndicator.style.display = "none";
+    const fileList = Array.from(files);
+    
+    // Si es un solo archivo especial, mantenemos el nombre del archivo para el ZIP
+    if (fileList.length === 1) {
+        currentFileName = fileList[0].name.split('.').slice(0, -1).join('.');
+    } else {
+        currentFileName = "coleccion_imagenes";
     }
-};
 
-// --- LOGICA DE EXTRACCIÓN ---
-
-async function handleFile(file) {
-    if (!file) return;
-    currentFileName = file.name.split('.').slice(0, -1).join('.');
-    sourceImages = [];
-    preview.innerHTML = "";
-    downloadZipBtn.style.display = "none";
-    loadingIndicator.style.display = "block";
-    
     try {
-        const ext = file.name.split('.').pop().toLowerCase();
-        loadingIndicator.textContent = "📂 Analizando archivo...";
-
-        if (file.type === 'application/pdf' || ext === 'pdf') {
-            await extractFromPDF(file);
-        } else if (ext === 'pptx') {
-            await extractFromPPTX(file);
-        } else if (file.type === 'text/html' || ext === 'html' || ext === 'htm') {
-            await extractFromHTMLFile(file);
-        } else {
-            throw new Error("Formato no soportado");
+        for (const file of fileList) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            
+            if (ext === 'pdf') {
+                await extractFromPDF(file);
+            } else if (ext === 'pptx') {
+                await extractFromPPTX(file);
+            } else if (ext === 'html' || ext === 'htm') {
+                await extractFromHTMLFile(file);
+            } else if (['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext)) {
+                await processSingleImageFile(file);
+            }
         }
 
         if (sourceImages.length === 0) {
-            alert("No se encontraron imágenes extraíbles.");
+            alert("No se encontraron imágenes válidas.");
             loadingIndicator.style.display = "none";
         } else {
             processImages();
@@ -117,130 +99,74 @@ async function handleFile(file) {
     }
 }
 
-// 1. PDF - EXTRACTOR PURO (CORREGIDO)
-// Ahora busca objetos de imagen (XObjects) en lugar de tomar fotos a la página
-// --- 1. PDF - EXTRACTOR PURO (CORREGIDO Y ROBUSTO) ---
-async function extractFromPDF(file) {
-    loadingIndicator.textContent = "📄 Analizando objetos internos del PDF...";
-    const buffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument(buffer).promise;
-    
-    let totalImagesFound = 0;
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-        try {
-            const page = await pdf.getPage(i);
-            const ops = await page.getOperatorList();
-            
-            for (let j = 0; j < ops.fnArray.length; j++) {
-                if (ops.fnArray[j] === pdfjsLib.OPS.paintImageXObject) {
-                    const imgName = ops.argsArray[j][0];
-                    
-                    try {
-                        // Intentamos obtener el objeto. Si falla, saltamos al siguiente sin romper el bucle.
-                        const imgObj = await page.objs.get(imgName);
-                        
-                        if (imgObj) {
-                            // Caso 1: Imagen ya decodificada por el navegador (JPEGs comunes)
-                            if (imgObj.bitmap) {
-                                const canvas = document.createElement('canvas');
-                                canvas.width = imgObj.width;
-                                canvas.height = imgObj.height;
-                                const ctx = canvas.getContext('2d');
-                                ctx.drawImage(imgObj.bitmap, 0, 0);
-                                
-                                addImageToQueue(i, totalImagesFound++, canvas);
-                            } 
-                            // Caso 2: Datos crudos (RAW) - Aquí ocurría el error de "multiple of 4"
-                            else if (imgObj.data) {
-                                const canvas = normalizeImageData(imgObj);
-                                if (canvas) {
-                                    addImageToQueue(i, totalImagesFound++, canvas);
-                                }
-                            }
-                        }
-                    } catch (innerErr) {
-                        // Ignoramos errores de objetos no resueltos para seguir con los demás
-                        console.warn(`Saltando objeto dañado en pág ${i}:`, innerErr);
-                    }
-                }
+// --- NUEVA FUNCIÓN: Procesar archivos de imagen directamente (para carpetas/archivos sueltos) ---
+async function processSingleImageFile(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const img = await loadImage(e.target.result);
+                const canvas = imageToCanvas(img);
+                sourceImages.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    sourceName: file.name,
+                    canvas: canvas,
+                    originalSize: file.size
+                });
+                resolve();
+            } catch (err) {
+                console.error("Error cargando imagen:", file.name);
+                resolve();
             }
-        } catch (pageErr) {
-            console.warn(`Error leyendo página ${i}`, pageErr);
-        }
-    }
-}
-
-// --- FUNCIÓN AUXILIAR PARA CORREGIR COLORES (NUEVA) ---
-function normalizeImageData(imgObj) {
-    try {
-        const width = imgObj.width;
-        const height = imgObj.height;
-        const rawData = imgObj.data;
-        const kind = imgObj.kind || -1; // ImageKind: 1=GRAY, 2=RGB, 3=RGBA
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        
-        let finalData;
-
-        // Validamos el tamaño esperado vs real
-        // RGB (3 bytes por pixel)
-        if (kind === 2 || rawData.length === width * height * 3) {
-            finalData = new Uint8ClampedArray(width * height * 4);
-            for (let i = 0, j = 0; i < rawData.length; i += 3, j += 4) {
-                finalData[j] = rawData[i];     // R
-                finalData[j + 1] = rawData[i + 1]; // G
-                finalData[j + 2] = rawData[i + 2]; // B
-                finalData[j + 3] = 255;        // Alpha (Opaco)
-            }
-        } 
-        // Grayscale (1 byte por pixel)
-        else if (kind === 1 || rawData.length === width * height) {
-            finalData = new Uint8ClampedArray(width * height * 4);
-            for (let i = 0, j = 0; i < rawData.length; i++, j += 4) {
-                finalData[j] = rawData[i];     // R
-                finalData[j + 1] = rawData[i]; // G
-                finalData[j + 2] = rawData[i]; // B
-                finalData[j + 3] = 255;        // Alpha
-            }
-        }
-        // RGBA (4 bytes - Ya compatible)
-        else if (kind === 3 || rawData.length === width * height * 4) {
-            finalData = new Uint8ClampedArray(rawData);
-        } 
-        // CMYK u otros formatos raros (Intentamos conversión simple o fallamos)
-        else {
-            console.warn("Formato de color no soportado automáticamente:", kind, rawData.length);
-            return null;
-        }
-
-        const imageData = new ImageData(finalData, width, height);
-        ctx.putImageData(imageData, 0, 0);
-        return canvas;
-
-    } catch (e) {
-        console.error("Error normalizando imagen:", e);
-        return null;
-    }
-}
-
-// --- Helper para no repetir código en el loop ---
-function addImageToQueue(pageParams, count, canvas) {
-    sourceImages.push({
-        id: `${pageParams}_${count}`,
-        sourceName: `PDF_Pag${pageParams}_Img${count}`,
-        canvas: canvas,
-        originalSize: estimateSize(canvas.toDataURL()) 
+        };
+        reader.readAsDataURL(file);
     });
 }
 
-// 2. PPTX
+// 1. PDF - EXTRACTOR
+async function extractFromPDF(file) {
+    loadingIndicator.textContent = "📄 Analizando PDF: " + file.name;
+    const buffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument(buffer).promise;
+    let totalImagesFound = 0;
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const ops = await page.getOperatorList();
+        for (let j = 0; j < ops.fnArray.length; j++) {
+            if (ops.fnArray[j] === pdfjsLib.OPS.paintImageXObject) {
+                const imgName = ops.argsArray[j][0];
+                try {
+                    const imgObj = await page.objs.get(imgName);
+                    if (imgObj) {
+                        let canvas;
+                        if (imgObj.bitmap) {
+                            canvas = document.createElement('canvas');
+                            canvas.width = imgObj.width; canvas.height = imgObj.height;
+                            canvas.getContext('2d').drawImage(imgObj.bitmap, 0, 0);
+                        } else if (imgObj.data) {
+                            canvas = normalizeImageData(imgObj);
+                        }
+                        if (canvas) {
+                            sourceImages.push({
+                                id: `pdf_${i}_${totalImagesFound}`,
+                                sourceName: `Pag${i}_Img${totalImagesFound}`,
+                                canvas: canvas,
+                                originalSize: estimateSize(canvas.toDataURL()) 
+                            });
+                            totalImagesFound++;
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+}
+
+// 2. PPTX - EXTRACTOR
 async function extractFromPPTX(file) {
+    loadingIndicator.textContent = "📊 Analizando PPTX: " + file.name;
     const zip = await JSZip.loadAsync(file);
-    let count = 1;
     const mediaFiles = Object.keys(zip.files).filter(path => path.startsWith("ppt/media/"));
     for (const path of mediaFiles) {
         if (zip.files[path].dir) continue;
@@ -249,84 +175,68 @@ async function extractFromPPTX(file) {
         const canvas = document.createElement("canvas");
         canvas.width = bitmap.width; canvas.height = bitmap.height;
         canvas.getContext("2d").drawImage(bitmap, 0, 0);
-        sourceImages.push({ id: count++, sourceName: path.split("/").pop(), canvas: canvas, originalSize: blob.size });
+        sourceImages.push({ 
+            id: path, 
+            sourceName: path.split("/").pop(), 
+            canvas: canvas, 
+            originalSize: blob.size 
+        });
     }
 }
 
-// 3. HTML Archivo Local
+// 3. HTML / URL - EXTRACTORES
 async function extractFromHTMLFile(file) {
     const text = await file.text();
     await parseAndExtractImages(text, null); 
 }
 
-// 4. URL Web
-async function extractFromURL(targetUrl) {
-    const proxyUrl = CORS_PROXY + encodeURIComponent(targetUrl);
-    const response = await fetch(proxyUrl);
-    if (!response.ok) throw new Error(`El sitio rechazó la conexión (Status: ${response.status})`);
-    const htmlText = await response.text();
-    await parseAndExtractImages(htmlText, targetUrl);
-}
+urlBtn.onclick = async () => {
+    const url = urlInput.value.trim();
+    if(!url) return alert("Ingresa una URL");
+    loadingIndicator.style.display = "block";
+    loadingIndicator.textContent = "🌐 Extrayendo de Web...";
+    try {
+        const proxyUrl = CORS_PROXY + encodeURIComponent(url);
+        const resp = await fetch(proxyUrl);
+        const html = await resp.text();
+        sourceImages = [];
+        await parseAndExtractImages(html, url);
+        processImages();
+    } catch (e) { alert("Error web"); loadingIndicator.style.display="none"; }
+};
 
-// Lógica compartida para HTML
 async function parseAndExtractImages(htmlContent, baseUrl) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlContent, "text/html");
-    const imgs = doc.querySelectorAll("img");
-    let count = 1;
-    const uniqueUrls = new Set();
-
+    const imgs = Array.from(doc.querySelectorAll("img"));
     for (const img of imgs) {
-        let src = img.getAttribute("src") || img.getAttribute("data-src"); 
+        let src = img.getAttribute("src");
         if (!src) continue;
-        src = src.trim();
-
-        let absoluteUrl = src;
-        if (baseUrl && !src.startsWith("data:")) {
-            try { absoluteUrl = new URL(src, baseUrl).href; } catch (e) { continue; }
-        }
-
-        if(uniqueUrls.has(absoluteUrl) || absoluteUrl.endsWith(".svg")) continue;
-        uniqueUrls.add(absoluteUrl);
-
         try {
-            loadingIndicator.textContent = `Descargando imagen ${count}...`;
-            let cvs = null;
-            let size = 0;
-
-            if (absoluteUrl.startsWith("data:")) {
-                const imgEl = await loadImage(absoluteUrl);
-                cvs = imageToCanvas(imgEl);
-                size = estimateSize(absoluteUrl);
-            } else if (baseUrl) {
-                const proxiedImgUrl = CORS_PROXY + encodeURIComponent(absoluteUrl);
-                const resp = await fetch(proxiedImgUrl);
-                if(!resp.ok) continue;
-                const blob = await resp.blob();
-                if(blob.size < 5000) continue; 
-                const bitmap = await createImageBitmap(blob);
-                cvs = document.createElement("canvas");
-                cvs.width = bitmap.width; cvs.height = bitmap.height;
-                cvs.getContext("2d").drawImage(bitmap, 0, 0);
-                size = blob.size;
-            }
-
-            if (cvs) {
-                let name = absoluteUrl.split('/').pop().split('?')[0];
-                if(name.length > 30) name = "imagen_web_" + count;
-                if(!name.includes(".")) name += ".jpg";
-                sourceImages.push({ id: count++, sourceName: name, canvas: cvs, originalSize: size });
-            }
-        } catch (e) { console.warn("Skipping image"); }
+            if (baseUrl && !src.startsWith("data:")) src = new URL(src, baseUrl).href;
+            const proxied = src.startsWith("data:") ? src : CORS_PROXY + encodeURIComponent(src);
+            const res = await fetch(proxied);
+            const blob = await res.blob();
+            if (blob.size < 2000) continue;
+            const bitmap = await createImageBitmap(blob);
+            const cvs = document.createElement("canvas");
+            cvs.width = bitmap.width; cvs.height = bitmap.height;
+            cvs.getContext("2d").drawImage(bitmap, 0, 0);
+            sourceImages.push({ 
+                id: Math.random(), 
+                sourceName: "web_img", 
+                canvas: cvs, 
+                originalSize: blob.size 
+            });
+        } catch (e) {}
     }
 }
 
-// --- PROCESAMIENTO ---
-
+// --- PROCESAMIENTO Y COMPRESIÓN ---
 async function processImages() {
     if (!sourceImages.length) return;
     loadingIndicator.style.display = "block";
-    loadingIndicator.textContent = "⚙️ Optimizando imágenes...";
+    loadingIndicator.textContent = "⚙️ Optimizando...";
     
     setTimeout(async () => {
         preview.innerHTML = "";
@@ -346,8 +256,8 @@ async function processImages() {
             totalOriginal += item.originalSize;
             totalCompressed += finalSize;
             
-            let name = item.sourceName.replace(/\.[^/.]+$/, "") || "imagen";
-            const filename = `${name}.${ext}`;
+            let cleanName = item.sourceName.split('.')[0];
+            const filename = `${cleanName}_opt.${ext}`;
             
             addCard(item, finalData, item.originalSize, finalSize, filename);
             zip.file(filename, finalData.split(",")[1], {base64: true});
@@ -360,11 +270,30 @@ async function processImages() {
             const content = await zip.generateAsync({type:"blob"});
             const a = document.createElement("a");
             a.href = URL.createObjectURL(content);
-            a.download = `${currentFileName}_pack.zip`;
+            a.download = `${currentFileName}_optimizado.zip`;
             a.click();
         };
         loadingIndicator.style.display = "none";
-    }, 50);
+    }, 100);
+}
+
+// --- HELPERS ---
+function normalizeImageData(imgObj) {
+    const { width, height, data } = imgObj;
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    const finalData = new Uint8ClampedArray(width * height * 4);
+    // Conversión básica de RGB/Grayscale a RGBA
+    const isRGB = data.length === width * height * 3;
+    for (let i = 0, j = 0; i < data.length; i += (isRGB?3:1), j += 4) {
+        finalData[j] = data[i];
+        finalData[j+1] = isRGB ? data[i+1] : data[i];
+        finalData[j+2] = isRGB ? data[i+2] : data[i];
+        finalData[j+3] = 255;
+    }
+    ctx.putImageData(new ImageData(finalData, width, height), 0, 0);
+    return canvas;
 }
 
 function compressCanvas(canvas, cfg) {
@@ -379,22 +308,22 @@ function compressCanvas(canvas, cfg) {
     return tCanvas.toDataURL(cfg.format, cfg.quality);
 }
 
-// --- Helpers ---
 function loadImage(src) {
     return new Promise((resolve, reject) => {
         const img = new Image();
-        img.crossOrigin = "Anonymous"; 
         img.onload = () => resolve(img);
         img.onerror = reject;
         img.src = src;
     });
 }
+
 function imageToCanvas(img) {
     const c = document.createElement("canvas");
     c.width = img.naturalWidth; c.height = img.naturalHeight;
     c.getContext("2d").drawImage(img, 0, 0);
     return c;
 }
+
 function addCard(item, imgData, orig, comp, filename) {
     const savings = orig > 0 ? Math.round((1 - (comp / orig)) * 100) : 0;
     const div = document.createElement("div");
@@ -409,11 +338,24 @@ function addCard(item, imgData, orig, comp, filename) {
                 ${savings > 0 ? `-${savings}%` : 'Original'}
             </span>
         </div>
-        <button class="secondary full-width" onclick="downloadItem('${imgData}', '${filename}')">⬇ Bajar</button>
+        <button class="secondary full-width" style="margin-top:10px; cursor:pointer;" onclick="downloadItem('${imgData}', '${filename}')">⬇ Bajar</button>
     `;
     preview.appendChild(div);
 }
 
-function downloadItem(url, name){ const a = document.createElement("a"); a.href = url; a.download = name; a.click(); }
 function estimateSize(b64) { return Math.round((b64.length * 3) / 4); }
-function formatBytes(b) { if(b===0)return'0 B'; const k=1024; const i=Math.floor(Math.log(b)/Math.log(k)); return parseFloat((b/Math.pow(k,i)).toFixed(1))+' '+['B','KB','MB','GB'][i]; }
+function formatBytes(b) { 
+    if(b===0) return '0 B'; 
+    const k=1024; const i=Math.floor(Math.log(b)/Math.log(k)); 
+    return parseFloat((b/Math.pow(k,i)).toFixed(1))+' '+['B','KB','MB','GB'][i]; 
+}
+
+// Función para descargar una sola imagen
+function downloadItem(url, name) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
